@@ -120,7 +120,7 @@ export default function ColdFlowCalculatorV4() {
 
   // HubSpot + warm flow rates
   const [openAndPassedPct, setOpenAndPassedPct] = useState(50);
-  const [staysWarmPct, setStaysWarmPct] = useState(100);
+  const [staysWarmPct, setStaysWarmPct] = useState(50);
 
   // Current totals
   const [hubspotSoFar, setHubspotSoFar] = useState(120000);
