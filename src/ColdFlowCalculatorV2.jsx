@@ -103,24 +103,24 @@ function safeDivide(a, b) {
 /* =========================
    Component
 ========================= */
-export default function ColdFlowCalculatorV3() {
+export default function ColdFlowCalculatorV4() {
   // Event target -> work backwards
-  const [eventAttendanceTarget, setEventAttendanceTarget] = useState(10000);
-  const [ticketConversionPct, setTicketConversionPct] = useState(2);
+  const [eventAttendanceTarget, setEventAttendanceTarget] = useState(5000);
+  const [warmToAttendeePct, setWarmToAttendeePct] = useState(10);
 
-  // Cold data into flow
+  // Cold flow input
   const [monthStartData, setMonthStartData] = useState(160000);
   const [goodEmailablePct, setGoodEmailablePct] = useState(80);
   const [duplicateRate, setDuplicateRate] = useState(1);
 
-  // Fixed sending constraints
+  // Fixed capacities
   const [dailySendCapacity, setDailySendCapacity] = useState(7500);
   const [dailyWarmingCapacity, setDailyWarmingCapacity] = useState(3000);
   const [workdaysPerMonth, setWorkdaysPerMonth] = useState(20);
 
   // HubSpot + warm flow rates
-  const [openAndPassedPct, setOpenAndPassedPct] = useState(51);
-  const [staysWarmPct, setStaysWarmPct] = useState(85);
+  const [openAndPassedPct, setOpenAndPassedPct] = useState(50);
+  const [staysWarmPct, setStaysWarmPct] = useState(100);
 
   // Current totals
   const [hubspotSoFar, setHubspotSoFar] = useState(120000);
@@ -153,7 +153,7 @@ export default function ColdFlowCalculatorV3() {
     [targetDateText]
   );
 
-  // Optional segments
+  // Segments
   const [showSegments, setShowSegments] = useState(false);
   const [segments, setSegments] = useState([
     { id: 1, name: "Banks", pct: 20, locked: false },
@@ -220,25 +220,34 @@ export default function ColdFlowCalculatorV3() {
   };
 
   const model = useMemo(() => {
-    // Work backwards from attendees
-    const requiredHubspotTarget =
-      ticketConversionPct > 0
-        ? eventAttendanceTarget / (ticketConversionPct / 100)
+    // Work backwards from attendees via warm audience
+    const requiredWarmPoolTarget =
+      warmToAttendeePct > 0
+        ? eventAttendanceTarget / (warmToAttendeePct / 100)
         : Infinity;
 
-    // Monthly snapshot funnel
+    const requiredHubspotTarget =
+      staysWarmPct > 0
+        ? requiredWarmPoolTarget / (staysWarmPct / 100)
+        : Infinity;
+
+    // Cold flow
     const emailable = monthStartData * (goodEmailablePct / 100);
     const usableAfterDedup = Math.max(0, emailable * (1 - duplicateRate / 100));
 
     const monthlyCapacity = dailySendCapacity * workdaysPerMonth;
     const sendableThisMonth = Math.min(usableAfterDedup, monthlyCapacity);
 
+    const actualMaxSendablePerDay =
+      workdaysPerMonth > 0
+        ? Math.min(dailySendCapacity, usableAfterDedup / workdaysPerMonth)
+        : 0;
+
+    // HubSpot flow
     const addedToHubspotThisMonth =
       sendableThisMonth * (openAndPassedPct / 100);
 
     const monthlyWarmingCapacity = dailyWarmingCapacity * workdaysPerMonth;
-
-    // You cannot warm more than your warming capacity
     const warmedThisMonth = Math.min(
       addedToHubspotThisMonth,
       monthlyWarmingCapacity
@@ -259,9 +268,15 @@ export default function ColdFlowCalculatorV3() {
     const t = targetDate && isValidDate(targetDate) ? targetDate : null;
 
     const workdaysRemaining = s && t ? countWeekdaysExclusive(s, t) : 0;
+
     const hubspotNamesStillNeeded = Math.max(
       0,
       requiredHubspotTarget - hubspotSoFar
+    );
+
+    const warmNamesStillNeeded = Math.max(
+      0,
+      requiredWarmPoolTarget - warmPoolSoFar
     );
 
     const requiredHubspotAddedPerDay =
@@ -274,8 +289,11 @@ export default function ColdFlowCalculatorV3() {
     );
 
     const capacitySendPerDay = dailySendCapacity;
+    const coldFlowSentPerDay = actualMaxSendablePerDay;
+
     const baseAchievableHubspotPerDay =
-      capacitySendPerDay * hubspotFromSendRate;
+      coldFlowSentPerDay * hubspotFromSendRate;
+
     const baseWarmedPerDay = Math.min(
       baseAchievableHubspotPerDay,
       dailyWarmingCapacity
@@ -321,12 +339,15 @@ export default function ColdFlowCalculatorV3() {
     }));
 
     return {
+      requiredWarmPoolTarget,
       requiredHubspotTarget,
 
       emailable,
       usableAfterDedup,
       monthlyCapacity,
       sendableThisMonth,
+      actualMaxSendablePerDay,
+
       addedToHubspotThisMonth,
       warmedThisMonth,
       warmAddedThisMonth,
@@ -339,9 +360,13 @@ export default function ColdFlowCalculatorV3() {
 
       workdaysRemaining,
       hubspotNamesStillNeeded,
+      warmNamesStillNeeded,
+
       requiredHubspotAddedPerDay,
       requiredSendPerDay,
       capacitySendPerDay,
+      coldFlowSentPerDay,
+
       baseAchievableHubspotPerDay,
       baseAchievableWarmPerDay,
       capacityOK,
@@ -349,12 +374,11 @@ export default function ColdFlowCalculatorV3() {
       effectiveConversionToWarm,
 
       scenarios,
-
       segmentBreakdown,
     };
   }, [
     eventAttendanceTarget,
-    ticketConversionPct,
+    warmToAttendeePct,
     monthStartData,
     goodEmailablePct,
     duplicateRate,
@@ -389,21 +413,21 @@ export default function ColdFlowCalculatorV3() {
         value: model.sendableThisMonth,
       },
       {
-        label: "Total Warm in Hubspot This Month",
+        label: "Total in HubSpot after warming",
         value: model.warmPoolAfterThisMonth,
       },
     ];
   }, [monthStartData, goodEmailablePct, duplicateRate, model]);
 
-  const maxValue = Math.max(...funnelStages.map((s) => s.value), 1);
+  const maxValue = Math.max(funnelStages[0]?.value || 1, 1);
 
   return (
     <div className="container">
       <div className="header">
-        <h1 className="title">Cold Flow Calculator (v2)</h1>
+        <h1 className="title">Cold Flow Calculator</h1>
         <p className="subtitle">
-          Work backwards from event attendance → required HubSpot target → cold
-          flow → warm pool growth.
+          Work backwards from event attendance → required warm audience →
+          required HubSpot target → cold flow → warming.
         </p>
       </div>
 
@@ -442,22 +466,20 @@ export default function ColdFlowCalculatorV3() {
               <div className="field">
                 <div className="fieldTop">
                   <span className="label">
-                    % of total HubSpot that buys tickets
+                    % of warm audience that buys tickets
                   </span>
                   <span className="value">
-                    {formatPct(ticketConversionPct, 1)}
+                    {formatPct(warmToAttendeePct, 1)}
                   </span>
                 </div>
                 <input
                   className="range"
                   type="range"
                   min="0.1"
-                  max="10"
+                  max="25"
                   step="0.1"
-                  value={ticketConversionPct}
-                  onChange={(e) =>
-                    setTicketConversionPct(Number(e.target.value))
-                  }
+                  value={warmToAttendeePct}
+                  onChange={(e) => setWarmToAttendeePct(Number(e.target.value))}
                 />
               </div>
             </div>
@@ -525,7 +547,7 @@ export default function ColdFlowCalculatorV3() {
             </div>
 
             <div className="cardHeader" style={{ marginTop: 6 }}>
-              <div className="cardTitle">Sending (fixed)</div>
+              <div className="cardTitle">Sending & warming (fixed)</div>
               <span className="badge">Capacity</span>
             </div>
 
@@ -625,14 +647,14 @@ export default function ColdFlowCalculatorV3() {
             </div>
 
             <div className="cardHeader" style={{ marginTop: 6 }}>
-              <div className="cardTitle">Current totals</div>
+              <div className="cardTitle">Current HubSpot totals</div>
               <span className="badge">Base</span>
             </div>
 
             <div className="twoCol">
               <div className="field">
                 <div className="fieldTop">
-                  <span className="label">Names in HubSpot now</span>
+                  <span className="label">Total in HubSpot</span>
                   <span className="value">{formatInt(hubspotSoFar)}</span>
                 </div>
                 <input
@@ -648,7 +670,7 @@ export default function ColdFlowCalculatorV3() {
 
               <div className="field">
                 <div className="fieldTop">
-                  <span className="label">Warm pool now</span>
+                  <span className="label">Total warm in HubSpot</span>
                   <span className="value">{formatInt(warmPoolSoFar)}</span>
                 </div>
                 <input
@@ -669,6 +691,13 @@ export default function ColdFlowCalculatorV3() {
         <div className="section">
           <div className="kpiGrid">
             <div className="kpi">
+              <div className="kpiKicker">Required warm audience</div>
+              <div className="kpiValue kpiValue--good">
+                {formatInt(model.requiredWarmPoolTarget)}
+              </div>
+            </div>
+
+            <div className="kpi">
               <div className="kpiKicker">Required total HubSpot database</div>
               <div className="kpiValue kpiValue--hot">
                 {formatInt(model.requiredHubspotTarget)}
@@ -683,13 +712,6 @@ export default function ColdFlowCalculatorV3() {
             </div>
 
             <div className="kpi">
-              <div className="kpiKicker">Warm added this month</div>
-              <div className="kpiValue kpiValue--good">
-                {formatInt(model.warmAddedThisMonth)}
-              </div>
-            </div>
-
-            <div className="kpi">
               <div className="kpiKicker">Warm backlog this month</div>
               <div className="kpiValue">
                 {formatInt(model.warmBacklogThisMonth)}
@@ -699,7 +721,7 @@ export default function ColdFlowCalculatorV3() {
 
           <div className="card">
             <div className="cardHeader">
-              <div className="cardTitle">Monthly funnel snapshot</div>
+              <div className="cardTitle">Monthly snapshot</div>
               <span className="badge">This month</span>
             </div>
 
@@ -731,7 +753,7 @@ export default function ColdFlowCalculatorV3() {
           <div className="card">
             <div className="cardHeader">
               <div className="cardTitle">
-                Build {formatInt(model.requiredHubspotTarget)} HubSpot names by{" "}
+                Build {formatInt(model.requiredWarmPoolTarget)} warm names by{" "}
                 {targetDateText || "DD/MM/YYYY"}
               </div>
               <span className="badge badge--hot">Plan</span>
@@ -786,6 +808,13 @@ export default function ColdFlowCalculatorV3() {
               </div>
 
               <div className="stat">
+                <div className="statKicker">Warm names still needed</div>
+                <div className="statNum">
+                  {formatInt(model.warmNamesStillNeeded)}
+                </div>
+              </div>
+
+              <div className="stat">
                 <div className="statKicker">HubSpot names still needed</div>
                 <div className="statNum">
                   {formatInt(model.hubspotNamesStillNeeded)}
@@ -814,6 +843,13 @@ export default function ColdFlowCalculatorV3() {
                 </div>
                 <div className="statNum">
                   {formatInt(model.capacitySendPerDay)}
+                </div>
+              </div>
+
+              <div className="stat">
+                <div className="statKicker">Actual sendable / workday</div>
+                <div className="statNum">
+                  {formatInt(model.actualMaxSendablePerDay)}
                 </div>
               </div>
 
@@ -1062,8 +1098,8 @@ export default function ColdFlowCalculatorV3() {
             {showSegments && (
               <>
                 <div className="smallNote" style={{ marginBottom: 12 }}>
-                  Use this to split your required HubSpot target and warm pool
-                  into ICP groups.
+                  Use this to split your HubSpot target and warm pool into ICP
+                  groups.
                 </div>
 
                 <div className="smallNote" style={{ marginBottom: 12 }}>
