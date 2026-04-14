@@ -1,5 +1,11 @@
 import React, { useMemo, useState } from "react";
-import { TrendingDown } from "lucide-react";
+import {
+  TrendingDown,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 /* =========================
    Helpers
@@ -7,70 +13,96 @@ import { TrendingDown } from "lucide-react";
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
+
 function formatInt(n) {
   if (!Number.isFinite(n)) return "—";
   return Math.round(n).toLocaleString();
 }
+
+function formatPct(n, digits = 1) {
+  if (!Number.isFinite(n)) return "—";
+  return `${Number(n).toFixed(digits)}%`;
+}
+
 function isValidDate(d) {
   return d instanceof Date && !isNaN(d.getTime());
 }
+
 function isWeekday(date) {
   const day = date.getDay();
-  return day >= 1 && day <= 5; // Mon..Fri
+  return day >= 1 && day <= 5;
 }
+
 function addDays(d, days) {
   const x = new Date(d);
   x.setDate(x.getDate() + days);
   return x;
 }
+
 function countWeekdaysExclusive(startDate, endDate) {
-  // weekdays from startDate (exclusive) to endDate (inclusive)
   if (!isValidDate(startDate) || !isValidDate(endDate)) return 0;
   if (endDate <= startDate) return 0;
 
   let count = 0;
   let d = addDays(startDate, 1);
+
   while (d <= endDate) {
     if (isWeekday(d)) count += 1;
     d = addDays(d, 1);
   }
+
   return count;
 }
+
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
+
 function formatDDMMYYYY(date) {
   if (!isValidDate(date)) return "";
-  return `${pad2(date.getDate())}/${pad2(
-    date.getMonth() + 1
-  )}/${date.getFullYear()}`;
+  return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}/${date.getFullYear()}`;
 }
+
 function parseDDMMYYYY(s) {
   if (!s) return null;
   const cleaned = String(s).trim();
   const m = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (!m) return null;
+
   const dd = Number(m[1]);
   const mm = Number(m[2]);
   const yyyy = Number(m[3]);
+
   if (mm < 1 || mm > 12) return null;
   if (dd < 1 || dd > 31) return null;
 
   const d = new Date(yyyy, mm - 1, dd);
-  if (d.getFullYear() !== yyyy || d.getMonth() !== mm - 1 || d.getDate() !== dd)
+  if (d.getFullYear() !== yyyy || d.getMonth() !== mm - 1 || d.getDate() !== dd) {
     return null;
+  }
+
   return d;
 }
+
 function normalizeDateInput(value) {
   const d = parseDDMMYYYY(value);
   return d ? formatDDMMYYYY(d) : value;
 }
 
+function safeDivide(a, b) {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return Infinity;
+  return a / b;
+}
+
 /* =========================
    Component
 ========================= */
-export default function ColdFlowCalculatorV2() {
-  // Pool + rates
+export default function ColdFlowCalculatorV3() {
+  // Event target -> work backwards
+  const [eventAttendanceTarget, setEventAttendanceTarget] = useState(10000);
+  const [ticketConversionPct, setTicketConversionPct] = useState(2);
+
+  // Cold data into flow
   const [monthStartData, setMonthStartData] = useState(160000);
   const [goodEmailablePct, setGoodEmailablePct] = useState(80);
   const [duplicateRate, setDuplicateRate] = useState(1);
@@ -79,20 +111,21 @@ export default function ColdFlowCalculatorV2() {
   const [dailySendCapacity, setDailySendCapacity] = useState(7500);
   const [workdaysPerMonth, setWorkdaysPerMonth] = useState(20);
 
-  // Downstream rates
+  // HubSpot + warm flow rates
   const [openAndPassedPct, setOpenAndPassedPct] = useState(51);
-  const [nurtureEngagedPct, setNurtureEngagedPct] = useState(100);
+  const [warmingRatePct, setWarmingRatePct] = useState(80);
+  const [staysWarmPct, setStaysWarmPct] = useState(85);
 
-  // HubSpot totals + target
+  // Current totals
   const [hubspotSoFar, setHubspotSoFar] = useState(120000);
-  const [hubspotTarget, setHubspotTarget] = useState(500000);
+  const [warmPoolSoFar, setWarmPoolSoFar] = useState(60000);
 
-  // Scenario band (multipliers around achievable kept/day)
+  // Scenario band
   const [worstMult, setWorstMult] = useState(0.8);
   const [expectedMult, setExpectedMult] = useState(1.0);
   const [bestMult, setBestMult] = useState(1.15);
 
-  // Dates (DD/MM/YYYY)
+  // Dates
   const today = useMemo(() => new Date(), []);
   const defaultTarget = useMemo(() => {
     const x = new Date();
@@ -101,20 +134,86 @@ export default function ColdFlowCalculatorV2() {
   }, []);
 
   const [startDateText, setStartDateText] = useState(formatDDMMYYYY(today));
-  const [targetDateText, setTargetDateText] = useState(
-    formatDDMMYYYY(defaultTarget)
-  );
+  const [targetDateText, setTargetDateText] = useState(formatDDMMYYYY(defaultTarget));
 
-  const startDate = useMemo(
-    () => parseDDMMYYYY(startDateText),
-    [startDateText]
-  );
-  const targetDate = useMemo(
-    () => parseDDMMYYYY(targetDateText),
-    [targetDateText]
-  );
+  const startDate = useMemo(() => parseDDMMYYYY(startDateText), [startDateText]);
+  const targetDate = useMemo(() => parseDDMMYYYY(targetDateText), [targetDateText]);
+
+  // Optional segments
+  const [showSegments, setShowSegments] = useState(false);
+  const [segments, setSegments] = useState([
+    { id: 1, name: "Banks", pct: 20, locked: false },
+    { id: 2, name: "Asset Managers", pct: 15, locked: false },
+    { id: 3, name: "Insurers", pct: 10, locked: false },
+    { id: 4, name: "Other", pct: 55, locked: true },
+  ]);
+
+  const rebalanceSegments = (list) => {
+    const locked = list.find((s) => s.locked);
+    if (!locked) return list;
+
+    const editableTotal = list
+      .filter((s) => !s.locked)
+      .reduce((sum, s) => sum + Number(s.pct || 0), 0);
+
+    const remainder = Math.max(0, 100 - editableTotal);
+
+    return list.map((s) =>
+      s.locked ? { ...s, pct: remainder } : s
+    );
+  };
+
+  const addSegment = () => {
+    setSegments((prev) => {
+      const unlocked = prev.filter((s) => !s.locked);
+      const locked = prev.find((s) => s.locked);
+
+      if (!locked) return prev;
+
+      const next = [
+        ...unlocked,
+        {
+          id: Date.now(),
+          name: `Segment ${unlocked.length + 1}`,
+          pct: 0,
+          locked: false,
+        },
+        locked,
+      ];
+
+      return rebalanceSegments(next);
+    });
+  };
+
+  const updateSegment = (id, field, value) => {
+    setSegments((prev) => {
+      const next = prev.map((segment) =>
+        segment.id === id
+          ? {
+              ...segment,
+              [field]: field === "pct" ? Number(value) : value,
+            }
+          : segment
+      );
+
+      return rebalanceSegments(next);
+    });
+  };
+
+  const removeSegment = (id) => {
+    setSegments((prev) => {
+      const next = prev.filter((segment) => segment.id !== id);
+      return rebalanceSegments(next);
+    });
+  };
 
   const model = useMemo(() => {
+    // Work backwards from attendees
+    const requiredHubspotTarget =
+      ticketConversionPct > 0
+        ? eventAttendanceTarget / (ticketConversionPct / 100)
+        : Infinity;
+
     // Monthly snapshot funnel
     const emailable = monthStartData * (goodEmailablePct / 100);
     const usableAfterDedup = Math.max(0, emailable * (1 - duplicateRate / 100));
@@ -122,108 +221,124 @@ export default function ColdFlowCalculatorV2() {
     const monthlyCapacity = dailySendCapacity * workdaysPerMonth;
     const sendableThisMonth = Math.min(usableAfterDedup, monthlyCapacity);
 
-    const openedAndPassed = sendableThisMonth * (openAndPassedPct / 100);
-    const kept = openedAndPassed * (nurtureEngagedPct / 100);
+    const addedToHubspotThisMonth = sendableThisMonth * (openAndPassedPct / 100);
+    const warmedThisMonth = addedToHubspotThisMonth * (warmingRatePct / 100);
+    const warmAddedThisMonth = warmedThisMonth * (staysWarmPct / 100);
 
-    const totalHubspotAfterThisMonth = hubspotSoFar + kept;
+    const totalHubspotAfterThisMonth = hubspotSoFar + addedToHubspotThisMonth;
+    const warmPoolAfterThisMonth = warmPoolSoFar + warmAddedThisMonth;
 
     // Planning window
     const s = startDate && isValidDate(startDate) ? startDate : null;
     const t = targetDate && isValidDate(targetDate) ? targetDate : null;
 
     const workdaysRemaining = s && t ? countWeekdaysExclusive(s, t) : 0;
-    const namesStillNeeded = Math.max(0, hubspotTarget - hubspotSoFar);
+    const hubspotNamesStillNeeded = Math.max(0, requiredHubspotTarget - hubspotSoFar);
 
-    // Required kept/day to hit target by date
-    const requiredKeptPerDay =
-      workdaysRemaining > 0 ? namesStillNeeded / workdaysRemaining : 0;
+    const requiredHubspotAddedPerDay =
+      workdaysRemaining > 0 ? hubspotNamesStillNeeded / workdaysRemaining : 0;
 
-    // Given the downstream %s, how much send/day does that require?
-    const keptFromSendRate =
-      (openAndPassedPct / 100) * (nurtureEngagedPct / 100);
+    const hubspotFromSendRate = openAndPassedPct / 100;
+    const requiredSendPerDay = safeDivide(requiredHubspotAddedPerDay, hubspotFromSendRate);
 
-    const requiredSendPerDay =
-      keptFromSendRate > 0 ? requiredKeptPerDay / keptFromSendRate : Infinity;
-
-    // Capacity is fixed
     const capacitySendPerDay = dailySendCapacity;
+    const baseAchievableHubspotPerDay = capacitySendPerDay * hubspotFromSendRate;
+    const baseAchievableWarmPerDay =
+      baseAchievableHubspotPerDay *
+      (warmingRatePct / 100) *
+      (staysWarmPct / 100);
 
-    // Achievable kept/day at current settings (capacity × rates)
-    const baseAchievableKeptPerDay = capacitySendPerDay * keptFromSendRate;
+    const capacityOK = requiredSendPerDay <= capacitySendPerDay;
 
-    // Scenario band
     const scenarios = [
       { key: "worst", label: "Worst case", mult: worstMult },
       { key: "expected", label: "Expected", mult: expectedMult },
       { key: "best", label: "Best case", mult: bestMult },
     ].map((sc) => {
-      const achievableKeptPerDay = baseAchievableKeptPerDay * sc.mult;
+      const achievableHubspotPerDay = baseAchievableHubspotPerDay * sc.mult;
+      const achievableWarmPerDay = baseAchievableWarmPerDay * sc.mult;
 
-      const daysToTarget =
-        achievableKeptPerDay > 0
-          ? Math.ceil(namesStillNeeded / achievableKeptPerDay)
+      const daysToHubspotTarget =
+        achievableHubspotPerDay > 0
+          ? Math.ceil(hubspotNamesStillNeeded / achievableHubspotPerDay)
           : Infinity;
-
-      const onTrack = achievableKeptPerDay >= requiredKeptPerDay;
-      const capacityOK = requiredSendPerDay <= capacitySendPerDay;
 
       return {
         ...sc,
-        achievableKeptPerDay,
-        daysToTarget,
-        onTrack,
-        capacityOK,
+        achievableHubspotPerDay,
+        achievableWarmPerDay,
+        daysToHubspotTarget,
+        onTrack: achievableHubspotPerDay >= requiredHubspotAddedPerDay,
       };
     });
 
-    const effectiveConversion =
+    const effectiveConversionToWarm =
       (goodEmailablePct / 100) *
       (1 - duplicateRate / 100) *
       (openAndPassedPct / 100) *
-      (nurtureEngagedPct / 100);
+      (warmingRatePct / 100) *
+      (staysWarmPct / 100);
+
+    const segmentBreakdown = segments.map((segment) => ({
+      ...segment,
+      targetHubspotCount: requiredHubspotTarget * (segment.pct / 100),
+      currentHubspotCount: hubspotSoFar * (segment.pct / 100),
+      warmPoolCount: warmPoolAfterThisMonth * (segment.pct / 100),
+    }));
 
     return {
-      // Monthly snapshot
+      requiredHubspotTarget,
+
       emailable,
       usableAfterDedup,
       monthlyCapacity,
       sendableThisMonth,
-      openedAndPassed,
-      kept,
-      totalHubspotAfterThisMonth,
-      effectiveConversion,
+      addedToHubspotThisMonth,
+      warmedThisMonth,
+      warmAddedThisMonth,
 
-      // Planning essentials
+      totalHubspotAfterThisMonth,
+      warmPoolAfterThisMonth,
+
       workdaysRemaining,
-      namesStillNeeded,
-      requiredKeptPerDay,
+      hubspotNamesStillNeeded,
+      requiredHubspotAddedPerDay,
       requiredSendPerDay,
       capacitySendPerDay,
-      baseAchievableKeptPerDay,
+      baseAchievableHubspotPerDay,
+      baseAchievableWarmPerDay,
+      capacityOK,
 
-      // Scenarios
+      effectiveConversionToWarm,
+
       scenarios,
+
+      segmentBreakdown,
     };
   }, [
+    eventAttendanceTarget,
+    ticketConversionPct,
     monthStartData,
     goodEmailablePct,
     duplicateRate,
     dailySendCapacity,
     workdaysPerMonth,
     openAndPassedPct,
-    nurtureEngagedPct,
+    warmingRatePct,
+    staysWarmPct,
     hubspotSoFar,
-    hubspotTarget,
+    warmPoolSoFar,
     worstMult,
     expectedMult,
     bestMult,
     startDate,
     targetDate,
+    segments,
   ]);
 
   const funnelStages = useMemo(() => {
     return [
-      { label: "Data at start of month", value: monthStartData },
+      { label: "Cold data into flow this month", value: monthStartData },
       {
         label: `Good / emailable (${goodEmailablePct}%)`,
         value: model.emailable,
@@ -233,29 +348,29 @@ export default function ColdFlowCalculatorV2() {
         value: model.usableAfterDedup,
       },
       {
-        label: `Send capacity this month (${formatInt(
-          dailySendCapacity
-        )}/day × ${workdaysPerMonth} days)`,
-        value: model.monthlyCapacity,
-      },
-      { label: "Actually sendable this month", value: model.sendableThisMonth },
-      {
-        label: `Opened + passed to HubSpot (${openAndPassedPct}%)`,
-        value: model.openedAndPassed,
+        label: "Actually sendable this month",
+        value: model.sendableThisMonth,
       },
       {
-        label: `Engaged nurture / kept (${nurtureEngagedPct}%)`,
-        value: model.kept,
+        label: `Added to HubSpot (${openAndPassedPct}%)`,
+        value: model.addedToHubspotThisMonth,
+      },
+      {
+        label: `Warmed (${warmingRatePct}%)`,
+        value: model.warmedThisMonth,
+      },
+      {
+        label: `Stays warm (${staysWarmPct}%)`,
+        value: model.warmAddedThisMonth,
       },
     ];
   }, [
     monthStartData,
     goodEmailablePct,
     duplicateRate,
-    dailySendCapacity,
-    workdaysPerMonth,
     openAndPassedPct,
-    nurtureEngagedPct,
+    warmingRatePct,
+    staysWarmPct,
     model,
   ]);
 
@@ -264,10 +379,9 @@ export default function ColdFlowCalculatorV2() {
   return (
     <div className="container">
       <div className="header">
-        <h1 className="title">Cold Flow Calculator (v2)</h1>
+        <h1 className="title">Cold Flow Calculator (v3)</h1>
         <p className="subtitle">
-          Snapshot your monthly funnel + plan “Build X by date” with a realistic
-          Worst/Expected/Best band.
+          Work backwards from event attendance → required HubSpot target → cold flow → warm pool growth.
         </p>
       </div>
 
@@ -277,14 +391,53 @@ export default function ColdFlowCalculatorV2() {
           <div className="card">
             <div className="cardHeader">
               <div className="cardTitle">
-                <TrendingDown /> <span>Inputs</span>
+                <TrendingDown /> <span>Targets & Inputs</span>
               </div>
-              <span className="badge">Rates</span>
+              <span className="badge">Plan</span>
+            </div>
+
+            <div className="twoCol">
+              <div className="field">
+                <div className="fieldTop">
+                  <span className="label">Event attendance target</span>
+                  <span className="value">{formatInt(eventAttendanceTarget)}</span>
+                </div>
+                <input
+                  className="range"
+                  type="range"
+                  min="0"
+                  max="50000"
+                  step="100"
+                  value={eventAttendanceTarget}
+                  onChange={(e) => setEventAttendanceTarget(Number(e.target.value))}
+                />
+              </div>
+
+              <div className="field">
+                <div className="fieldTop">
+                  <span className="label">% of total HubSpot that buys tickets</span>
+                  <span className="value">{formatPct(ticketConversionPct, 1)}</span>
+                </div>
+                <input
+                  className="range"
+                  type="range"
+                  min="0.1"
+                  max="10"
+                  step="0.1"
+                  value={ticketConversionPct}
+                  onChange={(e) => setTicketConversionPct(Number(e.target.value))}
+                />
+              </div>
+            </div>
+
+            <div className="cardHeader" style={{ marginTop: 6 }}>
+              <div className="cardTitle">Cold flow input</div>
+              <span className="badge">Cold</span>
             </div>
 
             <div className="field">
               <div className="fieldTop">
-                <span className="label">Data into coldflow start of month</span>
+                <span className="label">Data into cold flow start of month</span>
                 <span className="value">{formatInt(monthStartData)}</span>
               </div>
               <input
@@ -296,14 +449,13 @@ export default function ColdFlowCalculatorV2() {
                 value={monthStartData}
                 onChange={(e) => setMonthStartData(Number(e.target.value))}
               />
-              <div className="muted">Raw names available this month</div>
             </div>
 
             <div className="twoCol">
               <div className="field">
                 <div className="fieldTop">
                   <span className="label">% with good/emailable names</span>
-                  <span className="value">{goodEmailablePct}%</span>
+                  <span className="value">{formatPct(goodEmailablePct, 0)}</span>
                 </div>
                 <input
                   className="range"
@@ -319,7 +471,7 @@ export default function ColdFlowCalculatorV2() {
               <div className="field">
                 <div className="fieldTop">
                   <span className="label">% duplicate rate</span>
-                  <span className="value">{duplicateRate}%</span>
+                  <span className="value">{formatPct(duplicateRate, 1)}</span>
                 </div>
                 <input
                   className="range"
@@ -330,9 +482,7 @@ export default function ColdFlowCalculatorV2() {
                   value={duplicateRate}
                   onChange={(e) => setDuplicateRate(Number(e.target.value))}
                 />
-                <div className="muted">
-                  “no of campaigns increases duplicates”
-                </div>
+                <div className="muted">More campaigns usually = more overlap</div>
               </div>
             </div>
 
@@ -376,15 +526,15 @@ export default function ColdFlowCalculatorV2() {
             </div>
 
             <div className="cardHeader" style={{ marginTop: 6 }}>
-              <div className="cardTitle">HubSpot & Nurture</div>
-              <span className="badge">Flow</span>
+              <div className="cardTitle">HubSpot & warm flow</div>
+              <span className="badge">Warm</span>
             </div>
 
             <div className="twoCol">
               <div className="field">
                 <div className="fieldTop">
                   <span className="label">% opened & passed to HubSpot</span>
-                  <span className="value">{openAndPassedPct}%</span>
+                  <span className="value">{formatPct(openAndPassedPct, 0)}</span>
                 </div>
                 <input
                   className="range"
@@ -399,10 +549,8 @@ export default function ColdFlowCalculatorV2() {
 
               <div className="field">
                 <div className="fieldTop">
-                  <span className="label">
-                    % that engage with nurture flows (kept)
-                  </span>
-                  <span className="value">{nurtureEngagedPct}%</span>
+                  <span className="label">% that enters warming</span>
+                  <span className="value">{formatPct(warmingRatePct, 0)}</span>
                 </div>
                 <input
                   className="range"
@@ -410,21 +558,37 @@ export default function ColdFlowCalculatorV2() {
                   min="0"
                   max="100"
                   step="1"
-                  value={nurtureEngagedPct}
-                  onChange={(e) => setNurtureEngagedPct(Number(e.target.value))}
+                  value={warmingRatePct}
+                  onChange={(e) => setWarmingRatePct(Number(e.target.value))}
+                />
+              </div>
+
+              <div className="field">
+                <div className="fieldTop">
+                  <span className="label">% that stays warm</span>
+                  <span className="value">{formatPct(staysWarmPct, 0)}</span>
+                </div>
+                <input
+                  className="range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={staysWarmPct}
+                  onChange={(e) => setStaysWarmPct(Number(e.target.value))}
                 />
               </div>
             </div>
 
             <div className="cardHeader" style={{ marginTop: 6 }}>
-              <div className="cardTitle">Targets</div>
-              <span className="badge">Goal</span>
+              <div className="cardTitle">Current totals</div>
+              <span className="badge">Base</span>
             </div>
 
             <div className="twoCol">
               <div className="field">
                 <div className="fieldTop">
-                  <span className="label">Names in HubSpot</span>
+                  <span className="label">Names in HubSpot now</span>
                   <span className="value">{formatInt(hubspotSoFar)}</span>
                 </div>
                 <input
@@ -440,19 +604,17 @@ export default function ColdFlowCalculatorV2() {
 
               <div className="field">
                 <div className="fieldTop">
-                  <span className="label">HubSpot target total</span>
-                  <span className="value value--hot">
-                    {formatInt(hubspotTarget)}
-                  </span>
+                  <span className="label">Warm pool now</span>
+                  <span className="value">{formatInt(warmPoolSoFar)}</span>
                 </div>
                 <input
                   className="range"
                   type="range"
                   min="0"
-                  max="3000000"
-                  step="10000"
-                  value={hubspotTarget}
-                  onChange={(e) => setHubspotTarget(Number(e.target.value))}
+                  max="1000000"
+                  step="1000"
+                  value={warmPoolSoFar}
+                  onChange={(e) => setWarmPoolSoFar(Number(e.target.value))}
                 />
               </div>
             </div>
@@ -461,7 +623,32 @@ export default function ColdFlowCalculatorV2() {
 
         {/* RIGHT — Results */}
         <div className="section">
-          {/* Monthly snapshot funnel */}
+          <div className="kpiGrid">
+            <div className="kpi">
+              <div className="kpiKicker">Required total HubSpot database</div>
+              <div className="kpiValue kpiValue--hot">
+                {formatInt(model.requiredHubspotTarget)}
+              </div>
+            </div>
+
+            <div className="kpi">
+              <div className="kpiKicker">HubSpot added this month</div>
+              <div className="kpiValue">{formatInt(model.addedToHubspotThisMonth)}</div>
+            </div>
+
+            <div className="kpi">
+              <div className="kpiKicker">Warm added this month</div>
+              <div className="kpiValue kpiValue--good">
+                {formatInt(model.warmAddedThisMonth)}
+              </div>
+            </div>
+
+            <div className="kpi">
+              <div className="kpiKicker">Warm pool after this month</div>
+              <div className="kpiValue">{formatInt(model.warmPoolAfterThisMonth)}</div>
+            </div>
+          </div>
+
           <div className="card">
             <div className="cardHeader">
               <div className="cardTitle">Monthly funnel snapshot</div>
@@ -493,48 +680,15 @@ export default function ColdFlowCalculatorV2() {
             </div>
           </div>
 
-          {/* KPIs */}
-          <div className="kpiGrid">
-            <div className="kpi">
-              <div className="kpiKicker">Kept this month</div>
-              <div className="kpiValue kpiValue--good">
-                {formatInt(model.kept)}
-              </div>
-            </div>
-
-            <div className="kpi">
-              <div className="kpiKicker">HubSpot total after this month</div>
-              <div className="kpiValue">
-                {formatInt(model.totalHubspotAfterThisMonth)}
-              </div>
-            </div>
-
-            <div className="kpi">
-              <div className="kpiKicker">Monthly send capacity</div>
-              <div className="kpiValue kpiValue--hot">
-                {formatInt(model.monthlyCapacity)}
-              </div>
-            </div>
-
-            <div className="kpi">
-              <div className="kpiKicker">Effective conversion (raw → kept)</div>
-              <div className="kpiValue">
-                {(model.effectiveConversion * 100).toFixed(3)}%
-              </div>
-            </div>
-          </div>
-
-          {/* Build X Pane */}
           <div className="card">
             <div className="cardHeader">
               <div className="cardTitle">
-                Build {formatInt(hubspotTarget)} by{" "}
+                Build {formatInt(model.requiredHubspotTarget)} HubSpot names by{" "}
                 {targetDateText || "DD/MM/YYYY"}
               </div>
               <span className="badge badge--hot">Plan</span>
             </div>
 
-            {/* Date inputs */}
             <div className="twoCol">
               <div className="field">
                 <div className="fieldTop">
@@ -545,9 +699,7 @@ export default function ColdFlowCalculatorV2() {
                   type="text"
                   value={startDateText}
                   onChange={(e) => setStartDateText(e.target.value)}
-                  onBlur={(e) =>
-                    setStartDateText(normalizeDateInput(e.target.value))
-                  }
+                  onBlur={(e) => setStartDateText(normalizeDateInput(e.target.value))}
                   placeholder="DD/MM/YYYY"
                 />
                 <div className="muted">
@@ -564,9 +716,7 @@ export default function ColdFlowCalculatorV2() {
                   type="text"
                   value={targetDateText}
                   onChange={(e) => setTargetDateText(e.target.value)}
-                  onBlur={(e) =>
-                    setTargetDateText(normalizeDateInput(e.target.value))
-                  }
+                  onBlur={(e) => setTargetDateText(normalizeDateInput(e.target.value))}
                   placeholder="DD/MM/YYYY"
                 />
                 <div className="muted">
@@ -575,54 +725,38 @@ export default function ColdFlowCalculatorV2() {
               </div>
             </div>
 
-            {/* Required vs capacity */}
             <div className="twoCol" style={{ marginTop: 12 }}>
               <div className="stat">
                 <div className="statKicker">Workdays remaining</div>
-                <div className="statNum">
-                  {formatInt(model.workdaysRemaining)}
-                </div>
+                <div className="statNum">{formatInt(model.workdaysRemaining)}</div>
               </div>
 
               <div className="stat">
-                <div className="statKicker">Names still needed</div>
-                <div className="statNum">
-                  {formatInt(model.namesStillNeeded)}
-                </div>
+                <div className="statKicker">HubSpot names still needed</div>
+                <div className="statNum">{formatInt(model.hubspotNamesStillNeeded)}</div>
+              </div>
+
+              <div className="stat">
+                <div className="statKicker">Required HubSpot added / workday</div>
+                <div className="statNum">{formatInt(model.requiredHubspotAddedPerDay)}</div>
               </div>
 
               <div className="stat">
                 <div className="statKicker">Required send / workday</div>
-                <div className="statNum">
-                  {formatInt(model.requiredSendPerDay)}
-                </div>
+                <div className="statNum">{formatInt(model.requiredSendPerDay)}</div>
               </div>
 
               <div className="stat">
-                <div className="statKicker">
-                  Send capacity / workday (fixed)
-                </div>
-                <div className="statNum">
-                  {formatInt(model.capacitySendPerDay)}
-                </div>
+                <div className="statKicker">Send capacity / workday (fixed)</div>
+                <div className="statNum">{formatInt(model.capacitySendPerDay)}</div>
               </div>
 
               <div className="stat">
-                <div className="statKicker">Required kept / workday</div>
-                <div className="statNum">
-                  {formatInt(model.requiredKeptPerDay)}
-                </div>
-              </div>
-
-              <div className="stat">
-                <div className="statKicker">Base achievable kept / workday</div>
-                <div className="statNum">
-                  {formatInt(model.baseAchievableKeptPerDay)}
-                </div>
+                <div className="statKicker">Expected warm added / workday</div>
+                <div className="statNum">{formatInt(model.baseAchievableWarmPerDay)}</div>
               </div>
             </div>
 
-            {/* Scenario multipliers */}
             <div className="card" style={{ marginTop: 14 }}>
               <div className="cardHeader">
                 <div className="cardTitle">Scenario range</div>
@@ -633,9 +767,7 @@ export default function ColdFlowCalculatorV2() {
                 <div className="field">
                   <div className="fieldTop">
                     <span className="label">Worst</span>
-                    <span className="value">
-                      {Math.round(worstMult * 100)}%
-                    </span>
+                    <span className="value">{Math.round(worstMult * 100)}%</span>
                   </div>
                   <input
                     className="range"
@@ -651,9 +783,7 @@ export default function ColdFlowCalculatorV2() {
                 <div className="field">
                   <div className="fieldTop">
                     <span className="label">Expected</span>
-                    <span className="value">
-                      {Math.round(expectedMult * 100)}%
-                    </span>
+                    <span className="value">{Math.round(expectedMult * 100)}%</span>
                   </div>
                   <input
                     className="range"
@@ -682,14 +812,8 @@ export default function ColdFlowCalculatorV2() {
                   />
                 </div>
               </div>
-
-              <p className="smallNote">
-                These adjust achievable kept/day up/down around your model
-                (capacity × rates) to show a realistic range.
-              </p>
             </div>
 
-            {/* Scenario forecast table + assessment */}
             <div className="callout" style={{ marginTop: 14 }}>
               <div style={{ fontWeight: 900, marginBottom: 10 }}>
                 Scenario forecast
@@ -700,45 +824,24 @@ export default function ColdFlowCalculatorV2() {
                   style={{
                     width: "100%",
                     borderCollapse: "collapse",
-                    minWidth: 620,
+                    minWidth: 720,
                   }}
                 >
                   <thead>
                     <tr>
-                      <th
-                        style={{
-                          textAlign: "left",
-                          padding: "10px 8px",
-                          color: "rgba(255,255,255,0.7)",
-                        }}
-                      >
+                      <th style={{ textAlign: "left", padding: "10px 8px", color: "rgba(255,255,255,0.7)" }}>
                         Scenario
                       </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "10px 8px",
-                          color: "rgba(255,255,255,0.7)",
-                        }}
-                      >
-                        Achievable kept/day
+                      <th style={{ textAlign: "right", padding: "10px 8px", color: "rgba(255,255,255,0.7)" }}>
+                        HubSpot added/day
                       </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "10px 8px",
-                          color: "rgba(255,255,255,0.7)",
-                        }}
-                      >
-                        Days to target
+                      <th style={{ textAlign: "right", padding: "10px 8px", color: "rgba(255,255,255,0.7)" }}>
+                        Warm added/day
                       </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "10px 8px",
-                          color: "rgba(255,255,255,0.7)",
-                        }}
-                      >
+                      <th style={{ textAlign: "right", padding: "10px 8px", color: "rgba(255,255,255,0.7)" }}>
+                        Days to HubSpot target
+                      </th>
+                      <th style={{ textAlign: "right", padding: "10px 8px", color: "rgba(255,255,255,0.7)" }}>
                         Status
                       </th>
                     </tr>
@@ -748,33 +851,23 @@ export default function ColdFlowCalculatorV2() {
                     {model.scenarios.map((s) => (
                       <tr
                         key={s.key}
-                        style={{
-                          borderTop: "1px solid rgba(255,255,255,0.08)",
-                        }}
+                        style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
                       >
                         <td style={{ padding: "10px 8px", fontWeight: 800 }}>
                           {s.label}
                         </td>
 
-                        <td
-                          style={{
-                            padding: "10px 8px",
-                            textAlign: "right",
-                            fontWeight: 900,
-                          }}
-                        >
-                          {formatInt(s.achievableKeptPerDay)}
+                        <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>
+                          {formatInt(s.achievableHubspotPerDay)}
                         </td>
 
-                        <td
-                          style={{
-                            padding: "10px 8px",
-                            textAlign: "right",
-                            fontWeight: 900,
-                          }}
-                        >
-                          {Number.isFinite(s.daysToTarget)
-                            ? formatInt(s.daysToTarget)
+                        <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>
+                          {formatInt(s.achievableWarmPerDay)}
+                        </td>
+
+                        <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>
+                          {Number.isFinite(s.daysToHubspotTarget)
+                            ? formatInt(s.daysToHubspotTarget)
                             : "—"}
                         </td>
 
@@ -798,34 +891,163 @@ export default function ColdFlowCalculatorV2() {
 
               <ul style={{ marginTop: 10, paddingLeft: 18 }}>
                 <li>
-                  Required send/day:{" "}
-                  <b>{formatInt(model.requiredSendPerDay)}</b> vs capacity/day{" "}
+                  Required send/day: <b>{formatInt(model.requiredSendPerDay)}</b> vs capacity/day{" "}
                   <b>{formatInt(model.capacitySendPerDay)}</b>{" "}
                   <b
                     style={{
-                      color:
-                        model.requiredSendPerDay <= model.capacitySendPerDay
-                          ? "var(--good,#7CFFB2)"
-                          : "var(--warn,#FFB9A0)",
+                      color: model.capacityOK
+                        ? "var(--good,#7CFFB2)"
+                        : "var(--warn,#FFB9A0)",
                     }}
                   >
-                    {model.requiredSendPerDay <= model.capacitySendPerDay
-                      ? " (OK)"
-                      : " (NEEDS CAPACITY)"}
+                    {model.capacityOK ? " (OK)" : " (NEEDS CAPACITY)"}
                   </b>
                 </li>
                 <li>
-                  Required kept/day:{" "}
-                  <b>{formatInt(model.requiredKeptPerDay)}</b>
+                  Required HubSpot added/day: <b>{formatInt(model.requiredHubspotAddedPerDay)}</b>
                 </li>
               </ul>
-
-              <p className="smallNote" style={{ marginTop: 10 }}>
-                If required send/day exceeds capacity/day, you must raise
-                capacity or improve conversion (so you need less send to create
-                the same kept).
-              </p>
             </div>
+          </div>
+
+          <div className="card">
+            <div className="cardHeader">
+              <div className="cardTitle">Segments (optional)</div>
+              <button
+                type="button"
+                onClick={() => setShowSegments((prev) => !prev)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "inherit",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <span className="badge">{showSegments ? "Hide" : "Show"}</span>
+                {showSegments ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            </div>
+
+            {showSegments && (
+              <>
+                <div className="smallNote" style={{ marginBottom: 12 }}>
+                  Use this to split your required HubSpot target and warm pool into ICP groups.
+                </div>
+
+                <div className="smallNote" style={{ marginBottom: 12 }}>
+                  Total segment %: <b>100%</b>
+                </div>
+
+                <div style={{ display: "grid", gap: 12 }}>
+                  {segments.map((segment) => (
+                    <div
+                      key={segment.id}
+                      style={{
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 12,
+                        padding: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1.2fr 0.8fr auto",
+                          gap: 10,
+                          alignItems: "end",
+                          marginBottom: 10,
+                        }}
+                      >
+                        <div>
+                          <div className="label" style={{ marginBottom: 6 }}>
+                            Segment name
+                          </div>
+                          <input
+                            type="text"
+                            value={segment.name}
+                            onChange={(e) =>
+                              updateSegment(segment.id, "name", e.target.value)
+                            }
+                            placeholder="Segment name"
+                            disabled={segment.locked}
+                          />
+                        </div>
+
+                        <div>
+                          <div className="label" style={{ marginBottom: 6 }}>
+                            Segment percentage
+                          </div>
+                          <input
+                            type="text"
+                            value={segment.pct}
+                            onChange={(e) =>
+                              updateSegment(segment.id, "pct", e.target.value)
+                            }
+                            placeholder="%"
+                            disabled={segment.locked}
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => removeSegment(segment.id)}
+                          disabled={segment.locked}
+                          style={{
+                            background: "transparent",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            borderRadius: 10,
+                            padding: "8px 10px",
+                            color: "inherit",
+                            cursor: segment.locked ? "not-allowed" : "pointer",
+                            opacity: segment.locked ? 0.5 : 1,
+                          }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      <div className="twoCol">
+                        <div className="stat">
+                          <div className="statKicker">Target HubSpot names</div>
+                          <div className="statNum">
+                            {formatInt(segment.pct * model.requiredHubspotTarget / 100)}
+                          </div>
+                        </div>
+
+                        <div className="stat">
+                          <div className="statKicker">Warm pool share</div>
+                          <div className="statNum">
+                            {formatInt(segment.pct * model.warmPoolAfterThisMonth / 100)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addSegment}
+                  style={{
+                    marginTop: 12,
+                    background: "transparent",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 10,
+                    padding: "10px 12px",
+                    color: "inherit",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Plus size={16} />
+                  Add segment
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
