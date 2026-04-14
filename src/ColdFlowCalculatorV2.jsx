@@ -379,7 +379,7 @@ export default function ColdFlowCalculatorV3() {
   return (
     <div className="container">
       <div className="header">
-        <h1 className="title">Cold Flow Calculator (v3)</h1>
+        <h1 className="title">Cold Flow Calculator</h1>
         <p className="subtitle">
           Work backwards from event attendance → required HubSpot target → cold flow → warm pool growth.
         </p>
